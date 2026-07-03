@@ -462,7 +462,7 @@ Confirmar:
 
 🎥 **[Ver en YouTube — enlace pendiente](#)**
 
-**Duración estimada:** < 8 minutos
+
 
 ---
 
