@@ -1,4 +1,4 @@
-# 🔐 FortiGate — VPN Client-to-Site IPSec IKEv1
+# 🔐 FortiGate — VPN Client-to-Site SSL VPN
 
 <div align="center">
 
@@ -7,8 +7,8 @@ Seguridad de Redes · Prof. Jonathan Esteban Rondón Corniel
 **Arlene Fernández Herrera · Matrícula: 2025-0730**
 
 ![FortiGate](https://img.shields.io/badge/Plataforma-FortiGate-red?style=for-the-badge&logo=fortinet)
-![IPSec](https://img.shields.io/badge/Protocolo-IPSec%20IKEv1-blue?style=for-the-badge)
-![Client](https://img.shields.io/badge/Cliente-FortiClient-orange?style=for-the-badge)
+![SSLVPN](https://img.shields.io/badge/Protocolo-SSL%20VPN-blue?style=for-the-badge)
+![Client](https://img.shields.io/badge/Cliente-FortiClient%20Linux-orange?style=for-the-badge&logo=linux)
 ![Platform](https://img.shields.io/badge/Entorno-PNetLab-blueviolet?style=for-the-badge)
 
 </div>
@@ -22,7 +22,7 @@ Seguridad de Redes · Prof. Jonathan Esteban Rondón Corniel
 3. [Direccionamiento IP](#3-direccionamiento-ip)
 4. [Parámetros Configurados](#4-parámetros-configurados)
 5. [Scripts de Configuración](#5-scripts-de-configuración)
-6. [Configuración del Cliente FortiClient](#6-configuración-del-cliente-forticlient)
+6. [Configuración del Cliente FortiClient en Linux](#6-configuración-del-cliente-forticlient-en-linux)
 7. [Verificación mediante GUI](#7-verificación-mediante-gui)
 8. [Capturas de Pantalla](#8-capturas-de-pantalla)
 9. [Video Demostrativo](#9-video-demostrativo)
@@ -31,24 +31,26 @@ Seguridad de Redes · Prof. Jonathan Esteban Rondón Corniel
 
 ## 1. Objetivo
 
-Implementar y verificar una **VPN Client-to-Site** entre un cliente Linux/Windows con **FortiClient** y un firewall **FortiGate** en PNetLab. La práctica cubre:
+Implementar y verificar una **VPN Client-to-Site SSL VPN** entre un cliente **Linux con FortiClient** y un firewall **FortiGate** en PNetLab. La práctica cubre:
 
-- Configuración del **FortiGate** como servidor VPN con un rango de IPs para clientes remotos (IP Pool).
-- Establecimiento del túnel **IPSec IKEv1** con autenticación por usuario/contraseña local en el FortiGate.
-- Configuración de **políticas de firewall** que permitan el tráfico entre el cliente VPN y la LAN interna.
-- Conexión desde el cliente usando **FortiClient** (disponible para Linux y Windows) con autenticación de usuario.
-- Verificación del túnel activo y prueba de conectividad hacia PC1 mediante **traceroute** desde el cliente.
+- Configuración del **FortiGate** como servidor SSL VPN con portal en modo túnel, escuchando en el puerto `10443`.
+- Creación de un **pool de IPs** para clientes VPN (`10.73.30.200–10.73.30.210`) y un portal SSL VPN con `split-tunneling disable` (todo el tráfico del cliente pasa por el túnel).
+- Autenticación de usuarios mediante **base de datos local** del FortiGate (usuario `ArleneVPN`).
+- Configuración de **política de firewall** que permite el tráfico desde la interfaz `ssl.root` hacia la LAN interna (`port2`).
+- Conexión desde **Linux** usando **FortiClient** y verificación de conectividad hacia PC1 mediante **traceroute** a través de la GUI del FortiGate.
 
-### ¿Cómo funciona la VPN Client-to-Site en FortiGate?
+### ¿Por qué SSL VPN en lugar de IPSec?
 
-El FortiGate actúa como concentrador VPN. El cliente FortiClient negocia IPSec IKEv1 con el FortiGate, se autentica con usuario/contraseña local y recibe una IP del pool configurado. Una vez establecido el túnel, el tráfico del cliente hacia la LAN interna viaja cifrado.
+SSL VPN usa TLS sobre el puerto `10443` (HTTPS), lo que lo hace más sencillo de configurar en clientes Linux sin drivers adicionales y más compatible con entornos con NAT o firewalls intermedios. FortiClient en Linux se conecta directamente al portal SSL del FortiGate sin necesidad de configurar PSK ni Phase 1/Phase 2 manualmente.
 
 ```
-[Cliente FortiClient]
-    ↓ Negocia IPSec IKEv1 con PSK → autenticación usuario/contraseña
-[Recibe IP del pool 202.50.73.194–.206]
-    ↓ Túnel cifrado
-[Acceso a LAN interna 202.50.73.192/26 → PC1]
+[Cliente Linux — FortiClient]
+    ↓ Conexión HTTPS al puerto 10443 (SSL/TLS)
+    ↓ Autenticación usuario ArleneVPN / MiClaveVPN123
+[Recibe IP del pool 10.73.30.200–10.73.30.210]
+    ↓ Interfaz ssl.root en FortiGate
+    ↓ Política SSLVPN-LAN permite tráfico hacia port2
+[Acceso a LAN interna 202.50.73.0/24 → PC1]
 ```
 
 ---
@@ -59,30 +61,30 @@ El FortiGate actúa como concentrador VPN. El cliente FortiClient negocia IPSec 
                          [ ISP ]
                         /       \
                   e0/0 /         \ e0/1
-           202.50.73.1/26    192.168.19.2/24
+           202.50.73.x/24    192.168.19.2/24
                     │                │
-                   e0               Gi1: 192.168.19.5/24
+                   e0              port1: 192.168.19.5/24
            ┌────────┴───────┐  ┌────┴──────────────────┐
-           │   Cliente      │  │      FortiGate         │
-           │ (Linux/Win)    │  │   (Servidor VPN)       │
-           └────────────────┘  └────────────┬───────────┘
-                                         Gi2: 202.50.73.193/26
-                                             │
-                                        ┌────┴────┐
-                                        │   SW    │ e0/0 ↔ e0/2
-                                        └────┬────┘
-                                           eth0
-                                        ┌────┴────┐
-                                        │   PC1   │
-                                        │.194/26  │
-                                        └─────────┘
+           │    Cliente     │  │      FortiGate         │
+           │  Linux +       │  │   (Servidor SSL VPN)   │
+           │  FortiClient   │  └────────────┬───────────┘
+           └────────────────┘            port2: 202.50.73.1/24
+                                              │
+                                         ┌────┴────┐
+                                         │   SW    │ e0/0 ↔ e0/2
+                                         └────┬────┘
+                                            eth0
+                                         ┌────┴────┐
+                                         │   PC1   │
+                                         └─────────┘
 
-  Túnel VPN Client-to-Site:
-  Cliente (e0 → ISP e0/0) ══ IPSec IKEv1 ══ FortiGate Gi1
-  IP asignada al cliente: pool 202.50.73.208–.220
+  Túnel SSL VPN:
+  Cliente (e0 → ISP) ══ TLS puerto 10443 ══ FortiGate port1
+  Interfaz virtual del túnel: ssl.root
+  IP asignada al cliente: pool 10.73.30.200–10.73.30.210
 ```
 
-> El **ISP** actúa como red pública de tránsito. El cliente establece el túnel IPSec hacia `192.168.19.5` (FortiGate port1/Gi1).
+> La interfaz virtual `ssl.root` es creada automáticamente por FortiGate cuando un cliente SSL VPN se conecta. Las políticas de firewall usan esta interfaz como origen del tráfico VPN.
 
 ---
 
@@ -90,87 +92,100 @@ El FortiGate actúa como concentrador VPN. El cliente FortiClient negocia IPSec 
 
 ### Interfaces de Dispositivos
 
-| Dispositivo      | Interfaz  | Dirección IP      | Máscara | Gateway        | Rol                              |
-|------------------|-----------|-------------------|---------|----------------|----------------------------------|
-| **ISP**          | e0/0      | 202.50.73.1       | /26     | —              | Hacia cliente                    |
-| **ISP**          | e0/1      | 192.168.19.2      | /24     | —              | Hacia FortiGate (gateway WAN)    |
-| **FortiGate**    | **port1** | **192.168.19.5**  | **/24** | 192.168.19.2   | WAN → ISP (role: wan)            |
-| **FortiGate**    | **port2** | **202.50.73.193** | **/26** | —              | LAN interna → SW (role: lan)     |
-| SW               | e0/0      | —                 | —       | —              | Uplink → FortiGate port2         |
-| SW               | e0/2      | —                 | —       | —              | Downlink → PC1                   |
-| PC1              | eth0      | 202.50.73.194     | /26     | 202.50.73.193  | Host LAN interna                 |
-| **Cliente VPN**  | e0        | (vía ISP)         | /26     | 202.50.73.1    | Cliente FortiClient Linux/Win    |
-| **VPN Pool**     | Virtual   | 202.50.73.208–.220| /26     | —              | IPs asignadas a clientes VPN     |
-
-> El pool VPN usa el rango `202.50.73.208–202.50.73.220` dentro de la subred `/26` de la LAN, permitiendo que los clientes VPN accedan directamente a PC1.
+| Dispositivo      | Interfaz  | Dirección IP       | Máscara | Gateway        | Rol                           |
+|------------------|-----------|--------------------|---------|----------------|-------------------------------|
+| ISP              | e0/0      | (red del cliente)  | —       | —              | Hacia cliente Linux           |
+| ISP              | e0/1      | 192.168.19.2       | /24     | —              | Hacia FortiGate (gateway WAN) |
+| **FortiGate**    | **port1** | **192.168.19.5**   | **/24** | 192.168.19.2   | WAN → ISP (role: wan)         |
+| **FortiGate**    | **port2** | **202.50.73.1**    | **/24** | —              | LAN interna → SW (role: lan)  |
+| **FortiGate**    | ssl.root  | —                  | —       | —              | Interfaz virtual SSL VPN      |
+| SW               | e0/0      | —                  | —       | —              | Uplink → FortiGate port2      |
+| SW               | e0/2      | —                  | —       | —              | Downlink → PC1                |
+| PC1              | eth0      | 202.50.73.x        | /24     | 202.50.73.1    | Host LAN interna              |
+| **Cliente VPN**  | tun       | 10.73.30.200–.210  | —       | —              | IP asignada por SSL VPN pool  |
 
 ### Tabla de Subredes
 
-| Subred             | Rango Utilizable              | Broadcast       | Uso                         |
-|--------------------|-------------------------------|-----------------|------------------------------|
-| `192.168.19.0/24`  | 192.168.19.1 – 192.168.19.254 | 192.168.19.255  | Segmento WAN FortiGate ↔ ISP |
-| `202.50.73.0/26`   | 202.50.73.1 – 202.50.73.62    | 202.50.73.63    | Red ISP → Cliente            |
-| `202.50.73.192/26` | 202.50.73.193 – 202.50.73.254 | 202.50.73.255   | LAN interna + Pool VPN       |
+| Subred            | Rango Utilizable             | Uso                           |
+|-------------------|------------------------------|-------------------------------|
+| `192.168.19.0/24` | 192.168.19.1 – 192.168.19.254| Segmento WAN FortiGate ↔ ISP  |
+| `202.50.73.0/24`  | 202.50.73.1 – 202.50.73.254  | LAN interna (port2)           |
+| `10.73.30.200/32` | 10.73.30.200 – 10.73.30.210  | Pool IPs clientes SSL VPN     |
 
 ### Credenciales VPN
 
-| Parámetro      | Valor            |
-|----------------|------------------|
-| Usuario        | `cliente1`       |
-| Contraseña     | `cisco123`       |
-| Pre-Shared Key | `ITLA2025Arlene` |
-| Servidor VPN   | `192.168.19.5`   |
+| Parámetro    | Valor            |
+|--------------|------------------|
+| Usuario      | `ArleneVPN`      |
+| Contraseña   | `MiClaveVPN123`  |
+| Servidor VPN | `192.168.19.5`   |
+| Puerto       | `10443`          |
+| Portal       | `VPN_PORTAL`     |
 
 ---
 
 ## 4. Parámetros Configurados
 
-### Phase 1 — IKEv1
+### SSL VPN Settings
 
-| Parámetro        | Valor             | Descripción                                          |
-|------------------|-------------------|------------------------------------------------------|
-| IKE Version      | 1                 | Protocolo de negociación IKEv1                       |
-| Tipo             | Dialup (client)   | Acepta clientes con IP dinámica                      |
-| Proposal         | AES128-SHA1       | Cifrado AES-128 + integridad SHA1                    |
-| DH Group         | 2 (1024-bit)      | Intercambio Diffie-Hellman                           |
-| Pre-Shared Key   | `ITLA2025Arlene`  | Clave compartida con el cliente FortiClient          |
-| Autenticación    | Usuario/contraseña local | Autenticación de identidad del cliente         |
-| NAT Traversal    | Habilitado        | Permite túnel a través de NAT                        |
+| Parámetro          | Valor               | Descripción                                          |
+|--------------------|---------------------|------------------------------------------------------|
+| Certificado        | `Fortinet_Factory`  | Certificado TLS del servidor SSL VPN                 |
+| Puerto             | `10443`             | Puerto HTTPS del portal SSL VPN                      |
+| Source Interface   | port1, port2        | Interfaces que aceptan conexiones SSL VPN            |
+| Source Address     | all                 | Cualquier IP puede iniciar la conexión               |
+| Default Portal     | `VPN_PORTAL`        | Portal asignado por defecto a los usuarios           |
+| IP Pool            | `VPN_POOL`          | Pool de IPs asignadas a clientes conectados          |
 
-### Phase 2 — IPSec SA
+### Portal SSL VPN
 
-| Parámetro     | Valor          | Descripción                                   |
-|---------------|----------------|-----------------------------------------------|
-| Proposal      | AES128-SHA1    | Cifrado del tráfico de datos                  |
-| PFS           | Group 2        | Perfect Forward Secrecy                       |
-| Src Subnet    | 0.0.0.0/0      | Cualquier tráfico del cliente va por el túnel |
-| Dst Subnet    | 202.50.73.192/26 | Red LAN interna del FortiGate               |
+| Parámetro       | Valor        | Descripción                                               |
+|-----------------|--------------|-----------------------------------------------------------|
+| Nombre          | `VPN_PORTAL` | Nombre del portal SSL VPN                                 |
+| Tunnel Mode     | Habilitado   | El cliente recibe una IP virtual y accede a la LAN        |
+| IP Pool         | `VPN_POOL`   | Pool `10.73.30.200–10.73.30.210`                          |
+| Split Tunneling | Deshabilitado| Todo el tráfico del cliente pasa por el túnel VPN         |
 
-### IP Pool y Usuario
+> Con `split-tunneling disable`, todo el tráfico del cliente Linux (incluyendo internet) pasa por el FortiGate. Esto permite que el FortiGate inspecicone y logee toda la actividad del cliente VPN.
 
-| Parámetro    | Valor                          |
-|--------------|--------------------------------|
-| Pool Name    | `POOL-VPN-CLIENTES`            |
-| Rango        | 202.50.73.208 – 202.50.73.220  |
-| Usuario      | `cliente1` / `cisco123`        |
-| Grupo        | `GRP-VPN`                      |
+### IP Pool
 
-### Políticas de Firewall
+| Parámetro  | Valor          |
+|------------|----------------|
+| Nombre     | `VPN_POOL`     |
+| Tipo       | iprange        |
+| Inicio     | 10.73.30.200   |
+| Fin        | 10.73.30.210   |
 
-| Política       | Src Intf     | Dst Intf | Acción | Descripción                    |
-|----------------|--------------|----------|--------|--------------------------------|
-| `VPN-a-LAN`    | SSL-VPN/tunnel | port2  | accept | Cliente VPN accede a LAN       |
-| `LAN-a-VPN`    | port2        | tunnel   | accept | LAN responde al cliente VPN    |
+### Usuario y Grupo
+
+| Parámetro   | Valor         |
+|-------------|---------------|
+| Usuario     | `ArleneVPN`   |
+| Contraseña  | `MiClaveVPN123` |
+| Tipo        | password (local) |
+| Grupo       | `VPN_USERS`   |
+
+### Política de Firewall
+
+| Campo     | Valor          | Descripción                                  |
+|-----------|----------------|----------------------------------------------|
+| Nombre    | `SSLVPN-LAN`   | Permite tráfico SSL VPN hacia la LAN         |
+| Src Intf  | `ssl.root`     | Interfaz virtual de clientes SSL VPN         |
+| Dst Intf  | `port2`        | LAN interna                                  |
+| Grupos    | `VPN_USERS`    | Solo usuarios del grupo VPN pueden acceder   |
+| NAT       | Habilitado     | Traduce la IP del pool al segmento LAN       |
+| Acción    | accept         | Permite el tráfico                           |
 
 ---
 
 ## 5. Scripts de Configuración
 
-### FortiGate — Servidor VPN Client-to-Site
+### FortiGate — Servidor SSL VPN
 
 ```fortios
 ! ══════════════════════════════════════════════════════════════
-!  FortiGate — VPN Client-to-Site IPSec IKEv1
+!  FortiGate — SSL VPN Client-to-Site
 !  Arlene Fernández Herrera · 2025-0730 | Seguridad de Redes
 ! ══════════════════════════════════════════════════════════════
 
@@ -179,14 +194,15 @@ config system interface
     edit "port1"
         set mode static
         set ip 192.168.19.5 255.255.255.0
-        set allowaccess ping https ssh
+        set allowaccess ping http https ssh
         set role wan
     next
     edit "port2"
         set mode static
-        set ip 202.50.73.193 255.255.255.192
-        set allowaccess ping http ssh
+        set ip 202.50.73.1 255.255.255.0
+        set allowaccess ping http https ssh
         set role lan
+        unset device-identification
     next
 end
 
@@ -199,87 +215,62 @@ config router static
     next
 end
 
-! ── Usuario VPN local ────────────────────────────────────────
+! ── IP Pool para clientes SSL VPN ───────────────────────────
+config firewall address
+    edit "VPN_POOL"
+        set type iprange
+        set start-ip 10.73.30.200
+        set end-ip 10.73.30.210
+    next
+end
+
+! ── Usuario local VPN ────────────────────────────────────────
 config user local
-    edit "cliente1"
+    edit "ArleneVPN"
         set type password
-        set passwd cisco123
+        set passwd MiClaveVPN123
     next
 end
 
-! ── Grupo de usuarios VPN ────────────────────────────────────
+! ── Grupo de usuarios ────────────────────────────────────────
 config user group
-    edit "GRP-VPN"
-        set member "cliente1"
+    edit "VPN_USERS"
+        set member "ArleneVPN"
     next
 end
 
-! ── IP Pool para clientes VPN ────────────────────────────────
-config firewall ippool
-    edit "POOL-VPN-CLIENTES"
-        set startip 202.50.73.208
-        set endip 202.50.73.220
-        set type one-to-one
+! ── Portal SSL VPN ───────────────────────────────────────────
+config vpn ssl web portal
+    edit "VPN_PORTAL"
+        set tunnel-mode enable
+        set ip-pools "VPN_POOL"
+        set split-tunneling disable
     next
 end
 
-! ── VPN Phase 1 (IKEv1 Dialup) ──────────────────────────────
-config vpn ipsec phase1-interface
-    edit "VPN-CLIENTES"
-        set type dynamic
-        set interface "port1"
-        set ike-version 1
-        set peertype any
-        set net-device enable
-        set proposal aes128-sha1
-        set dhgrp 2
-        set psksecret ITLA2025Arlene
-        set ipv4-start-ip 202.50.73.208
-        set ipv4-end-ip 202.50.73.220
-        set ipv4-netmask 255.255.255.192
-        set usrgrp "GRP-VPN"
-        set xauthtype auto
-        set authusrgrp "GRP-VPN"
-        set nattraversal enable
-    next
+! ── Configuración global SSL VPN ─────────────────────────────
+config vpn ssl settings
+    set servercert "Fortinet_Factory"
+    set tunnel-ip-pools "VPN_POOL"
+    set port 10443
+    set source-interface "port1" "port2"
+    set source-address "all"
+    set default-portal "VPN_PORTAL"
 end
 
-! ── VPN Phase 2 ──────────────────────────────────────────────
-config vpn ipsec phase2-interface
-    edit "VPN-CLIENTES-P2"
-        set phase1name "VPN-CLIENTES"
-        set proposal aes128-sha1
-        set pfs enable
-        set dhgrp 2
-        set src-addr-type subnet
-        set dst-addr-type subnet
-        set src-subnet 0.0.0.0 0.0.0.0
-        set dst-subnet 202.50.73.192 255.255.255.192
-    next
-end
-
-! ── Políticas de Firewall ─────────────────────────────────────
+! ── Política de firewall SSL VPN → LAN ───────────────────────
 config firewall policy
     edit 1
-        set name "VPN-a-LAN"
-        set srcintf "VPN-CLIENTES"
+        set name "SSLVPN-LAN"
+        set srcintf "ssl.root"
         set dstintf "port2"
         set srcaddr "all"
         set dstaddr "all"
         set action accept
         set schedule "always"
         set service "ALL"
-        set logtraffic all
-    next
-    edit 2
-        set name "LAN-a-VPN"
-        set srcintf "port2"
-        set dstintf "VPN-CLIENTES"
-        set srcaddr "all"
-        set dstaddr "all"
-        set action accept
-        set schedule "always"
-        set service "ALL"
+        set groups "VPN_USERS"
+        set nat enable
         set logtraffic all
     next
 end
@@ -293,16 +284,10 @@ end
 ### ISP
 
 ```cisco
-! ══════════════════════════════════════════════════════════════
-!  ISP — Router de tránsito público
-!  Arlene Fernández Herrera · 2025-0730 | Seguridad de Redes
-! ══════════════════════════════════════════════════════════════
-
 hostname ISP
 
 interface Ethernet0/0
- description Hacia-Cliente
- ip address 202.50.73.1 255.255.255.192
+ description Hacia-Cliente-Linux
  no shutdown
 
 interface Ethernet0/1
@@ -311,130 +296,131 @@ interface Ethernet0/1
  no shutdown
 ```
 
-### PC1 — Host LAN interna
+---
+
+## 6. Configuración del Cliente FortiClient en Linux
+
+### Instalación de FortiClient en Linux
 
 ```bash
-ip 202.50.73.194 255.255.255.192 202.50.73.193
+# Debian / Ubuntu
+wget https://filestore.fortinet.com/forticlient/forticlient_vpn_7.x_amd64.deb
+sudo dpkg -i forticlient_vpn_7.x_amd64.deb
+sudo apt-get install -f
+
+# Red Hat / CentOS / Fedora
+sudo rpm -i forticlient_vpn_7.x.x86_64.rpm
+```
+
+> Alternativamente se puede usar el paquete `openfortivpn` para conexión por CLI:
+> ```bash
+> sudo apt install openfortivpn
+> ```
+
+---
+
+### Opción A — Conectar con FortiClient GUI en Linux
+
+1. Abrir **FortiClient** desde el menú de aplicaciones.
+2. Ir a la pestaña **Remote Access**.
+3. Clic en **"+"** → **Add new connection** → tipo **SSL-VPN**.
+4. Configurar:
+
+| Campo | Valor |
+|---|---|
+| Connection Name | `VPN-ITLA-SSL` |
+| Remote Gateway | `192.168.19.5` |
+| Port | `10443` |
+| Certificate | (aceptar el de fábrica) |
+| Username | `ArleneVPN` |
+
+5. Clic en **Save** → **Connect**.
+6. Ingresar contraseña `MiClaveVPN123` cuando se solicite.
+7. Verificar que se asigna una IP del pool `10.73.30.200–10.73.30.210`.
+
+---
+
+### Opción B — Conectar con openfortivpn (CLI)
+
+```bash
+sudo openfortivpn 192.168.19.5:10443 \
+  --username=ArleneVPN \
+  --password=MiClaveVPN123 \
+  --trusted-cert=<hash-del-certificado>
+```
+
+Una vez conectado, verificar la IP asignada:
+
+```bash
+ip addr show ppp0
+# o
+ip addr show tun0
 ```
 
 ---
 
-## 6. Configuración del Cliente FortiClient
+### Verificar conectividad desde Linux
 
-FortiClient está disponible para **Windows y Linux** y es el cliente VPN oficial de Fortinet para conectarse a FortiGate.
+```bash
+# Traceroute hacia PC1 en la LAN interna
+traceroute 202.50.73.x
 
-### Instalación
+# Ping de prueba
+ping -c 4 202.50.73.x
+```
 
-- **Windows:** Descargar FortiClient VPN desde `https://www.fortinet.com/support/product-downloads`
-- **Linux:** Instalar el paquete `forticlient` desde el repositorio oficial o usar el instalador `.deb`/`.rpm`
+Resultado esperado del traceroute:
 
----
-
-### Crear la conexión VPN en FortiClient
-
-1. Abrir **FortiClient** → pestaña **Remote Access**.
-2. Clic en **"+"** para agregar una nueva conexión VPN.
-3. Configurar los parámetros:
-
-| Campo | Valor |
-|---|---|
-| Connection Name | `VPN-ITLA-FortiGate` |
-| Remote Gateway | `192.168.19.5` |
-| Authentication | Pre-Shared Key |
-| Pre-Shared Key | `ITLA2025Arlene` |
-| Username | `cliente1` |
-| Password | `cisco123` |
-
-4. En la sección **Advanced**:
-   - VPN Type: **IPSec VPN**
-   - IKE Version: **1**
-   - NAT Traversal: **Habilitado**
-
-5. Clic en **Save**.
-
----
-
-### Conectar
-
-1. Seleccionar `VPN-ITLA-FortiGate` en la lista de conexiones.
-2. Clic en **Connect**.
-3. FortiClient mostrará el progreso de la negociación IKEv1 y la asignación de IP.
-4. Verificar que se asignó una IP del pool `202.50.73.208–.220`.
+```
+traceroute to 202.50.73.x (202.50.73.x), 30 hops max
+  1  202.50.73.1    <1 ms    FortiGate port2 (LAN gateway)
+  2  202.50.73.x    <2 ms    PC1 (LAN interna)
+```
 
 ---
 
 ## 7. Verificación mediante GUI
 
-### Estado del túnel en FortiGate
+### Estado del túnel SSL VPN
 
-**Ruta:** `VPN → IPsec Tunnels`
+**Ruta:** `VPN → SSL-VPN → Monitor`
 
-El túnel `VPN-CLIENTES` debe aparecer en verde con el número de sesiones activas.
-
----
-
-### Monitor de sesiones VPN activas
-
-**Ruta:** `Monitor → IPsec Monitor`
-
-Muestra:
-- IP remota del cliente conectado.
-- Bytes transmitidos y recibidos.
-- Estado de Phase 1 y Phase 2.
-- Tiempo activo de la sesión.
+Muestra los clientes conectados actualmente:
+- Nombre de usuario (`ArleneVPN`)
+- IP asignada del pool (`10.73.30.200`)
+- IP remota del cliente
+- Duración de la sesión
+- Bytes transmitidos / recibidos
 
 ---
 
-### Verificar IP asignada al cliente
+### Configuración del portal activo
 
-**Ruta:** `Monitor → IPsec Monitor` → expandir el túnel activo.
+**Ruta:** `VPN → SSL-VPN Portals`
 
-Debe mostrar la IP del pool asignada al cliente (`202.50.73.208` o la siguiente disponible).
+Verificar que el portal `VPN_PORTAL` tiene:
+- Tunnel Mode: ✅ habilitado
+- IP Pools: `VPN_POOL`
+- Split Tunneling: ✅ deshabilitado
 
 ---
 
-### Políticas con tráfico activo
+### Política de firewall con tráfico activo
 
 **Ruta:** `Policy & Objects → Firewall Policy`
 
-Los contadores de bytes en las políticas `VPN-a-LAN` y `LAN-a-VPN` deben ser mayores que 0 tras generar tráfico desde el cliente.
+La política `SSLVPN-LAN` debe mostrar contadores de bytes y sesiones activas mayores que 0 tras generar tráfico desde el cliente.
 
 ---
 
-### Traceroute desde el cliente hacia PC1
-
-**Desde cliente Windows (CMD):**
-
-```cmd
-tracert 202.50.73.194
-```
-
-**Desde cliente Linux (terminal):**
-
-```bash
-traceroute 202.50.73.194
-```
-
-Resultado esperado:
-
-```
-traceroute to 202.50.73.194 (202.50.73.194)
-  1  202.50.73.193   <1 ms    FortiGate port2 (LAN gateway)
-  2  202.50.73.194   <2 ms    PC1 (LAN interna)
-```
-
-> Si el traceroute llega a PC1 en 1 o 2 saltos a través del túnel VPN, la comunicación Client-to-Site está funcionando correctamente.
-
----
-
-### Log de eventos VPN
+### Log de eventos SSL VPN
 
 **Ruta:** `Log & Report → Events → VPN Events`
 
 Confirmar:
-- `IPsec phase-1 status changed to up` → Phase 1 establecida.
-- `IPsec phase-2 status changed to up` → Phase 2 establecida.
-- `User cliente1 logged in` → autenticación exitosa.
+- `SSL VPN tunnel up` — túnel SSL establecido.
+- `User ArleneVPN logged in` — autenticación exitosa.
+- `IP 10.73.30.200 assigned` — IP asignada del pool.
 
 ---
 
@@ -442,10 +428,10 @@ Confirmar:
 
 | Panel GUI | Ruta | Qué confirma |
 |---|---|---|
-| IPsec Tunnels | `VPN → IPsec Tunnels` | Túnel en verde con sesiones activas |
-| IPsec Monitor | `Monitor → IPsec Monitor` | Phase 1/2 up, IP del cliente, bytes |
-| Firewall Policy | `Policy & Objects → Firewall Policy` | Contadores de bytes > 0 |
-| VPN Events | `Log & Report → Events → VPN Events` | Login exitoso de `cliente1` |
+| SSL-VPN Monitor | `VPN → SSL-VPN → Monitor` | Cliente `ArleneVPN` conectado con IP del pool |
+| SSL-VPN Portals | `VPN → SSL-VPN Portals` | Portal `VPN_PORTAL` con tunnel mode activo |
+| Firewall Policy | `Policy & Objects → Firewall Policy` | Contadores de bytes > 0 en política `SSLVPN-LAN` |
+| VPN Events | `Log & Report → Events → VPN Events` | Login exitoso y túnel establecido |
 
 ---
 
@@ -453,11 +439,11 @@ Confirmar:
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| FortiClient falla en Phase 1 | PSK incorrecta o IKE version distinta | Verificar `ITLA2025Arlene` y que IKE version sea 1 en ambos lados |
-| Phase 1 OK pero Phase 2 falla | Proposal Phase 2 no coincide | Confirmar `aes128-sha1` en Phase 2 del FortiGate |
-| Autenticación falla | Usuario no existe o contraseña incorrecta | Verificar usuario `cliente1` en `User & Authentication → Local Users` |
-| IP no asignada al cliente | Pool agotado o mal configurado | Revisar `POOL-VPN-CLIENTES` en `Policy & Objects → IP Pools` |
-| Traceroute no llega a PC1 | Política `VPN-a-LAN` no existe | Verificar ambas políticas bidireccionales en FortiGate |
+| FortiClient no conecta al puerto 10443 | Puerto bloqueado o mal configurado | Verificar `set port 10443` en `vpn ssl settings` y que `port1` tenga `allowaccess https` |
+| Error de certificado en FortiClient | Certificado auto-firmado no aceptado | Marcar "trust this certificate" en FortiClient o aceptar con `--trusted-cert` en openfortivpn |
+| Autenticación falla | Usuario no existe en el grupo correcto | Verificar que `ArleneVPN` esté en el grupo `VPN_USERS` |
+| IP no asignada | Pool agotado o `tunnel-ip-pools` no configurado | Revisar `set tunnel-ip-pools "VPN_POOL"` en `vpn ssl settings` |
+| Sin acceso a LAN tras conectar | Política `SSLVPN-LAN` falta o srcintf incorrecto | Verificar que `srcintf` sea `ssl.root` y que el grupo `VPN_USERS` esté aplicado |
 
 ---
 
@@ -465,16 +451,16 @@ Confirmar:
 
 | # | Captura | Descripción |
 |---|---|---|
-| 1 | [Topología general](evidencias/1.png) | Topología en PNetLab con nombre y matrícula visibles: Cliente, ISP, FortiGate, SW y PC1 encendidos. |
-| 2 | [FortiClient conectado](evidencias/2.png) | FortiClient mostrando la conexión `VPN-ITLA-FortiGate` activa con IP asignada del pool. |
-| 3 | [GUI FortiGate – IPsec Monitor](evidencias/3.png) | Panel `Monitor → IPsec Monitor` con Phase 1 y Phase 2 activas y cliente `cliente1` conectado. |
-| 4 | [Traceroute exitoso](evidencias/4.png) | Resultado del traceroute desde el cliente hacia PC1 (`202.50.73.194`) a través del túnel VPN. |
+| 1 | [Topología general](evidencias/1.png) | Topología en PNetLab con nombre y matrícula visibles: Cliente Linux, ISP, FortiGate, SW y PC1 encendidos. |
+| 2 | [FortiClient Linux conectado](evidencias/2.png) | FortiClient en Linux mostrando la conexión `VPN-ITLA-SSL` activa con IP asignada del pool `10.73.30.x`. |
+| 3 | [GUI FortiGate – SSL-VPN Monitor](evidencias/3.png) | Panel `VPN → SSL-VPN → Monitor` con usuario `ArleneVPN` conectado, IP asignada y bytes transmitidos. |
+| 4 | [Traceroute exitoso](evidencias/4.png) | Resultado del traceroute desde el cliente Linux hacia PC1 en la LAN interna a través del túnel SSL VPN. |
 
 ---
 
 ## 9. Video Demostrativo
 
-🎥 **[Ver en YouTube — enlace pendiente](https://youtu.be/7ZMfNEZ1LQc)**
+🎥 **[Ver en YouTube — enlace pendiente](#)**
 
 **Duración estimada:** < 8 minutos
 
@@ -483,6 +469,6 @@ Confirmar:
 <div align="center">
 
 **Arlene Fernández Herrera · 2025-0730 · ITLA**  
-*Seguridad de Redes — Lab Extra: FortiGate VPN Client-to-Site*
+*Seguridad de Redes — Lab Extra: FortiGate SSL VPN Client-to-Site (Linux)*
 
 </div>
